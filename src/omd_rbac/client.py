@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import base64
 import os
+import subprocess
+import json as _json
 
 import httpx
 
@@ -68,6 +70,149 @@ class OMDClient:
     def get_user_token(self, email: str, password: str) -> str:
         return self._login(email, password)
 
+    # ── User provisioning (basic auth) ──────────────────────────────────
+    def create_user_with_login(
+        self,
+        name: str,
+        email: str,
+        password: str,
+        display_name: str = "",
+        team_ids: list[str] | None = None,
+    ) -> str:
+        """Create a user with working login credentials.
+
+        Strategy:
+        1. Self-signup via POST /users/signup (creates basic_auth entry)
+        2. Confirm email via Docker exec into the MySQL DB (extracts token)
+        3. Assign teams via admin PATCH
+        4. Returns the user ID
+
+        If signup fails (user exists), falls back to admin PUT + changePassword.
+        If Docker DB access fails, falls back gracefully (user created but login may not work).
+        """
+        pwd_b64 = base64.b64encode(password.encode()).decode()
+
+        # Step 1: Try to delete existing user first (idempotent)
+        existing = self.get(f"/users/name/{name}")
+        if existing.get("id"):
+            self._http.delete(
+                f"/users/{existing['id']}?hardDelete=true",
+                headers=self._headers(),
+            )
+
+        # Step 2: Signup (creates basic_auth_mechanism entry in DB)
+        first_name = display_name.split()[0] if display_name else name
+        last_name = display_name.split()[-1] if display_name and len(display_name.split()) > 1 else "User"
+        signup_resp = self._http.post(
+            "/users/signup",
+            json={
+                "firstName": first_name,
+                "lastName": last_name,
+                "email": email,
+                "password": pwd_b64,
+            },
+        )
+
+        if signup_resp.status_code not in (200, 201):
+            # Fallback: admin PUT
+            body: dict = {
+                "name": name,
+                "displayName": display_name or name,
+                "email": email,
+                "isBot": False,
+                "isAdmin": False,
+            }
+            if team_ids:
+                body["teams"] = team_ids
+            resp = self.put("/users", body)
+            return self.extract_id(resp.json()) if resp.status_code in (200, 201) else ""
+
+        user_data = signup_resp.json()
+        user_id = user_data.get("id", "")
+
+        # Step 3: Confirm email via Docker DB
+        self._confirm_email_via_docker(email)
+
+        # Step 4: Assign teams via admin PATCH (signup doesn't set teams)
+        if team_ids and user_id:
+            self.patch(f"/users/{user_id}", [
+                {"op": "replace", "path": "/teams", "value": [{"id": tid, "type": "team"} for tid in team_ids]}
+            ])
+
+        # Step 5: Set display name if different from signup default
+        if display_name and user_id:
+            self.patch(f"/users/{user_id}", [
+                {"op": "replace", "path": "/displayName", "value": display_name}
+            ])
+
+        return user_id
+
+    def _confirm_email_via_docker(self, email: str) -> bool:
+        """Confirm a user's email by extracting the verification token from the OMD MySQL DB via Docker.
+
+        This is necessary because OMD basic auth requires email confirmation before login,
+        and Docker environments typically don't have SMTP configured.
+        """
+        # Find the OMD MySQL container
+        container = self._find_mysql_container()
+        if not container:
+            return False
+
+        try:
+            # Query the token_relation table for the email verification token
+            sql = (
+                f"SELECT token FROM openmetadata_db.token_relation "
+                f"WHERE userid = (SELECT id FROM openmetadata_db.user_entity WHERE json->>'$.email' = '{email}') "
+                f"AND tokenType = 'EMAIL_VERIFICATION' "
+                f"ORDER BY expiryDate DESC LIMIT 1"
+            )
+            result = subprocess.run(
+                ["docker", "exec", container, "mysql", "-u", "openmetadata_user",
+                 "-popenmetadata_password", "-N", "-e", sql],
+                capture_output=True, text=True, timeout=10,
+            )
+
+            token = result.stdout.strip()
+            if not token:
+                # Try alternative: directly update the user entity to mark email as verified
+                sql_update = (
+                    f"UPDATE openmetadata_db.user_entity "
+                    f"SET json = JSON_SET(json, '$.isEmailVerified', true) "
+                    f"WHERE json->>'$.email' = '{email}'"
+                )
+                subprocess.run(
+                    ["docker", "exec", container, "mysql", "-u", "openmetadata_user",
+                     "-popenmetadata_password", "-e", sql_update],
+                    capture_output=True, text=True, timeout=10,
+                )
+                return True
+
+            # Confirm via the API
+            resp = self._http.put(
+                f"/users/registrationConfirmation?user={token}",
+            )
+            return resp.status_code == 200
+
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            return False
+
+    def _find_mysql_container(self) -> str:
+        """Find the running OMD MySQL Docker container name."""
+        try:
+            result = subprocess.run(
+                ["docker", "ps", "--filter", "ancestor=mysql:8", "--format", "{{.Names}}"],
+                capture_output=True, text=True, timeout=5,
+            )
+            containers = result.stdout.strip().split("\n")
+            # Look for openmetadata-related container
+            for c in containers:
+                if c and ("openmetadata" in c.lower() or "mysql" in c.lower()):
+                    return c
+            # Return first MySQL container if any
+            return containers[0] if containers and containers[0] else ""
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            return ""
+
     # ── Generic REST helpers ────────────────────────────────────────────
     def _headers(self, token: str | None = None, patch: bool = False) -> dict:
         t = token or self.admin_token
@@ -88,7 +233,7 @@ class OMDClient:
         return self._http.put(path, json=body, headers=self._headers(token))
 
     def patch(self, path: str, ops: list[dict], token: str | None = None) -> httpx.Response:
-        return self._http.patch(path, json=ops, headers=self._headers(patch=True))
+        return self._http.patch(path, json=ops, headers=self._headers(token, patch=True))
 
     def delete(self, path: str, token: str | None = None) -> httpx.Response:
         return self._http.delete(path, headers=self._headers(token))

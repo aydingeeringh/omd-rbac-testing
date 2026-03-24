@@ -119,6 +119,8 @@ def provision_roles(client: OMDClient, cfg: dict) -> None:
 
 def provision_teams(client: OMDClient, cfg: dict) -> None:
     header("4. Creating Teams")
+
+    # Pass 1: Create all teams (without parent/role/domain — those need IDs)
     for t in cfg.get("teams", []):
         name = t["name"]
         team_type = t["teamType"]
@@ -131,38 +133,38 @@ def provision_teams(client: OMDClient, cfg: dict) -> None:
             "teamType": team_type,
         })
 
-        tid = client.extract_id(client.get(f"/teams/name/{name}"))
-        if not tid:
-            err(f"Cannot find team {name}")
-            continue
+    # Pass 2: Assign parent, role, domain via PUT (idempotent, correct field formats)
+    for t in cfg.get("teams", []):
+        name = t["name"]
+        team_type = t["teamType"]
+        display = t.get("displayName", name)
 
-        # Parent
+        put_body: dict = {
+            "name": name,
+            "displayName": display,
+            "teamType": team_type,
+        }
+
+        # Parent — PUT expects UUID array
         parent = t.get("parent", "")
         if parent:
             pid = client.extract_id(client.get(f"/teams/name/{parent}"))
             if pid:
-                client.patch(f"/teams/{tid}", [
-                    {"op": "add", "path": "/parents", "value": [{"id": pid, "type": "team"}]}
-                ])
+                put_body["parents"] = [pid]
 
-        # Role
+        # Role — PUT expects UUID array
         role = t.get("role", "")
         if role:
             rid = client.extract_id(client.get(f"/roles/name/{role}"))
             if rid:
-                client.patch(f"/teams/{tid}", [
-                    {"op": "add", "path": "/defaultRoles", "value": [{"id": rid, "type": "role"}]}
-                ])
+                put_body["defaultRoles"] = [rid]
 
-        # Domain
+        # Domain — PUT expects FQN string array
         domain = t.get("domain", "")
         if domain:
-            did = client.extract_id(client.get(f"/domains/name/{domain}"))
-            if did:
-                client.patch(f"/teams/{tid}", [
-                    {"op": "add", "path": "/domains", "value": [{"id": did, "type": "domain"}]}
-                ])
+            put_body["domains"] = [domain]
 
+        client.put("/teams", put_body)
         log(f"{name} ({team_type}) ready")
 
 
@@ -176,23 +178,20 @@ def provision_users(client: OMDClient, cfg: dict) -> None:
         display = u.get("displayName", "")
 
         tid = client.extract_id(client.get(f"/teams/name/{team}"))
+        team_ids = [tid] if tid else []
 
-        client.post("/users", {
-            "name": name,
-            "displayName": display,
-            "email": email,
-            "isAdmin": False,
-            "teams": [tid] if tid else [],
-        })
+        uid = client.create_user_with_login(
+            name=name,
+            email=email,
+            password=password,
+            display_name=display,
+            team_ids=team_ids,
+        )
 
-        client.put("/users/changePassword", {
-            "username": name,
-            "requestType": "USER",
-            "newPassword": password,
-            "confirmPassword": password,
-        })
-
-        log(f"{name} ({email}) -> team {team}")
+        if uid:
+            log(f"{name} ({email}) -> team {team}")
+        else:
+            err(f"Failed to create {name} ({email})")
 
 
 def provision_glossaries(client: OMDClient, cfg: dict) -> None:
@@ -201,6 +200,7 @@ def provision_glossaries(client: OMDClient, cfg: dict) -> None:
         name = g["name"]
         domain = g.get("domain", "")
 
+        # Create glossary (POST for initial creation)
         client.post("/glossaries", {
             "name": name,
             "displayName": g.get("displayName", name),
@@ -213,21 +213,22 @@ def provision_glossaries(client: OMDClient, cfg: dict) -> None:
             err(f"Cannot find glossary {name}")
             continue
 
-        # Domain
+        # Domain — use PUT with 'domains' (plural, FQN string array)
         if domain:
-            did = client.extract_id(client.get(f"/domains/name/{domain}"))
-            if did:
-                client.patch(f"/glossaries/{gid}", [
-                    {"op": "add", "path": "/domains", "value": [{"id": did, "type": "domain"}]}
-                ])
+            client.put("/glossaries", {
+                "name": name,
+                "displayName": g.get("displayName", name),
+                "description": g.get("description", ""),
+                "domains": [domain],
+            })
 
-        # Owner team
+        # Owner team — use PATCH (works in both 1.11.x and 1.12.x)
         owner_team = g.get("owner_team", "")
         if owner_team:
             otid = client.extract_id(client.get(f"/teams/name/{owner_team}"))
             if otid:
                 client.patch(f"/glossaries/{gid}", [
-                    {"op": "add", "path": "/owners", "value": [{"id": otid, "type": "team"}]}
+                    {"op": "add", "path": "/owners/0", "value": {"id": otid, "type": "team"}}
                 ])
 
         # Reviewer team
@@ -236,14 +237,14 @@ def provision_glossaries(client: OMDClient, cfg: dict) -> None:
             rtid = client.extract_id(client.get(f"/teams/name/{reviewer_team}"))
             if rtid:
                 client.patch(f"/glossaries/{gid}", [
-                    {"op": "add", "path": "/reviewers", "value": [{"id": rtid, "type": "team"}]}
+                    {"op": "add", "path": "/reviewers/0", "value": {"id": rtid, "type": "team"}}
                 ])
 
         log(f"{name} glossary ready (domain={domain or 'none'})")
 
-        # Terms
+        # Terms — 'glossary' field expects FQN string (not object)
         for t in g.get("terms", []):
-            client.post("/glossaryTerms", {
+            client.put("/glossaryTerms", {
                 "glossary": name,
                 "name": t["name"],
                 "displayName": t.get("displayName", t["name"]),

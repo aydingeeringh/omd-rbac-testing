@@ -21,6 +21,8 @@ Thumbs.db
 
 # Downloaded compose files (version-specific, fetched via get-compose.sh)
 docker-compose-openmetadata.yml
+docker-compose-postgres.yml
+docker-compose-mysql.yml
 
 # Environment
 .env

@@ -1,0 +1,477 @@
+{
+  "description": "S&P Global — Domain-scoped 3-tier RBAC (read/write/admin per domain) on Collate 1.12.3",
+  "omd_version": "1.12.3",
+  "server": {
+    "base_url": "http://localhost:8585/api/v1",
+    "auth_type": "basic",
+    "admin_email": "admin@open-metadata.org",
+    "admin_password": "admin",
+    "api_token": ""
+  },
+
+  "domains": [
+    { "name": "marketimpact", "displayName": "Market Impact", "description": "Market Impact domain", "domainType": "Aggregate" },
+    { "name": "pas",          "displayName": "PAS",           "description": "PAS domain",           "domainType": "Aggregate" },
+    { "name": "tti",          "displayName": "TTI",           "description": "TTI domain",           "domainType": "Aggregate" },
+    { "name": "playground",   "displayName": "Playground",    "description": "Playground / sandbox domain for experimentation", "domainType": "Aggregate" }
+  ],
+
+  "policies": [
+    {
+      "name": "DomainReadPolicy",
+      "displayName": "Domain Read Policy",
+      "description": "Base read-only access — ViewAll/ViewBasic on all resources. Assigned to every user as the default.",
+      "rules": [
+        {
+          "name": "AllowViewAll",
+          "description": "Allow viewing all resources",
+          "effect": "allow",
+          "operations": ["ViewAll", "ViewBasic", "ViewCustomFields"],
+          "resources": ["All"]
+        }
+      ]
+    },
+    {
+      "name": "DomainWritePolicy",
+      "displayName": "Domain Write Policy",
+      "description": "Write access scoped to the user's domain. Allows create/edit operations only when hasDomain() matches. Denies all writes outside the domain.",
+      "rules": [
+        {
+          "name": "DenyWriteOutsideDomain",
+          "description": "Deny all write operations when user is not in the resource's domain",
+          "effect": "deny",
+          "operations": [
+            "Create", "Delete", "EditAll", "EditCustomFields",
+            "EditDescription", "EditDisplayName", "EditOwners",
+            "EditReviewers", "EditTags", "EditGlossaryTerms",
+            "EditTier", "EditEntityRelationship", "EditLineage",
+            "EditPolicy", "EditSampleData"
+          ],
+          "resources": ["All"],
+          "condition": "!hasDomain()"
+        },
+        {
+          "name": "AllowWriteInDomain",
+          "description": "Allow create/edit operations within the user's domain",
+          "effect": "allow",
+          "operations": [
+            "Create", "EditAll", "EditCustomFields",
+            "EditDescription", "EditDisplayName", "EditOwners",
+            "EditReviewers", "EditTags", "EditGlossaryTerms",
+            "EditTier", "EditEntityRelationship", "EditLineage",
+            "EditSampleData"
+          ],
+          "resources": ["All"],
+          "condition": "hasDomain()"
+        }
+      ]
+    },
+    {
+      "name": "DomainAdminPolicy",
+      "displayName": "Domain Admin Policy",
+      "description": "Full CRUD (including delete) scoped to the user's domain. Domain admins are super users within their domain but cannot touch other domains.",
+      "rules": [
+        {
+          "name": "DenyAllOutsideDomain",
+          "description": "Deny all write/delete operations outside the user's domain",
+          "effect": "deny",
+          "operations": [
+            "Create", "Delete", "EditAll", "EditCustomFields",
+            "EditDescription", "EditDisplayName", "EditOwners",
+            "EditReviewers", "EditTags", "EditGlossaryTerms",
+            "EditTier", "EditEntityRelationship", "EditLineage",
+            "EditPolicy", "EditSampleData"
+          ],
+          "resources": ["All"],
+          "condition": "!hasDomain()"
+        },
+        {
+          "name": "AllowAllInDomain",
+          "description": "Allow all operations within the user's domain (full CRUD including delete)",
+          "effect": "allow",
+          "operations": ["All"],
+          "resources": ["All"],
+          "condition": "hasDomain()"
+        }
+      ]
+    }
+  ],
+
+  "roles": [
+    {
+      "name": "DomainReader",
+      "description": "Read-only access to all data assets. Default role for all users (data consumers).",
+      "policies": ["DomainReadPolicy"]
+    },
+    {
+      "name": "DomainWriter",
+      "description": "Read access everywhere + create/edit (no delete) within assigned domain.",
+      "policies": ["DomainReadPolicy", "DomainWritePolicy"]
+    },
+    {
+      "name": "DomainAdmin",
+      "description": "Full CRUD within assigned domain. Super user for their domain only.",
+      "policies": ["DomainReadPolicy", "DomainAdminPolicy"]
+    }
+  ],
+
+  "teams": [
+    {
+      "name": "MarketImpactTeam",
+      "displayName": "Market Impact Team",
+      "teamType": "BusinessUnit",
+      "domain": "marketimpact"
+    },
+    {
+      "name": "MarketImpactReaders",
+      "displayName": "Market Impact Readers",
+      "teamType": "Group",
+      "parent": "MarketImpactTeam",
+      "role": "DomainReader",
+      "domain": "marketimpact"
+    },
+    {
+      "name": "MarketImpactWriters",
+      "displayName": "Market Impact Writers",
+      "teamType": "Group",
+      "parent": "MarketImpactTeam",
+      "role": "DomainWriter",
+      "domain": "marketimpact"
+    },
+    {
+      "name": "MarketImpactAdmins",
+      "displayName": "Market Impact Admins",
+      "teamType": "Group",
+      "parent": "MarketImpactTeam",
+      "role": "DomainAdmin",
+      "domain": "marketimpact"
+    },
+    {
+      "name": "PASTeam",
+      "displayName": "PAS Team",
+      "teamType": "BusinessUnit",
+      "domain": "pas"
+    },
+    {
+      "name": "PASReaders",
+      "displayName": "PAS Readers",
+      "teamType": "Group",
+      "parent": "PASTeam",
+      "role": "DomainReader",
+      "domain": "pas"
+    },
+    {
+      "name": "PASWriters",
+      "displayName": "PAS Writers",
+      "teamType": "Group",
+      "parent": "PASTeam",
+      "role": "DomainWriter",
+      "domain": "pas"
+    },
+    {
+      "name": "PASAdmins",
+      "displayName": "PAS Admins",
+      "teamType": "Group",
+      "parent": "PASTeam",
+      "role": "DomainAdmin",
+      "domain": "pas"
+    },
+    {
+      "name": "TTITeam",
+      "displayName": "TTI Team",
+      "teamType": "BusinessUnit",
+      "domain": "tti"
+    },
+    {
+      "name": "TTIReaders",
+      "displayName": "TTI Readers",
+      "teamType": "Group",
+      "parent": "TTITeam",
+      "role": "DomainReader",
+      "domain": "tti"
+    },
+    {
+      "name": "TTIWriters",
+      "displayName": "TTI Writers",
+      "teamType": "Group",
+      "parent": "TTITeam",
+      "role": "DomainWriter",
+      "domain": "tti"
+    },
+    {
+      "name": "TTIAdmins",
+      "displayName": "TTI Admins",
+      "teamType": "Group",
+      "parent": "TTITeam",
+      "role": "DomainAdmin",
+      "domain": "tti"
+    },
+    {
+      "name": "PlaygroundTeam",
+      "displayName": "Playground Team",
+      "teamType": "BusinessUnit",
+      "domain": "playground"
+    },
+    {
+      "name": "PlaygroundReaders",
+      "displayName": "Playground Readers",
+      "teamType": "Group",
+      "parent": "PlaygroundTeam",
+      "role": "DomainReader",
+      "domain": "playground"
+    },
+    {
+      "name": "PlaygroundWriters",
+      "displayName": "Playground Writers",
+      "teamType": "Group",
+      "parent": "PlaygroundTeam",
+      "role": "DomainWriter",
+      "domain": "playground"
+    },
+    {
+      "name": "PlaygroundAdmins",
+      "displayName": "Playground Admins",
+      "teamType": "Group",
+      "parent": "PlaygroundTeam",
+      "role": "DomainAdmin",
+      "domain": "playground"
+    },
+    {
+      "name": "DefaultReaders",
+      "displayName": "Default Readers",
+      "teamType": "Group",
+      "role": "DomainReader"
+    }
+  ],
+
+  "users": [
+    {
+      "name": "mi-reader",
+      "displayName": "MI Reader (Test)",
+      "email": "mi-reader@spglobal-test.local",
+      "password": "Test@12345",
+      "team": "MarketImpactReaders"
+    },
+    {
+      "name": "mi-writer",
+      "displayName": "MI Writer (Test)",
+      "email": "mi-writer@spglobal-test.local",
+      "password": "Test@12345",
+      "team": "MarketImpactWriters"
+    },
+    {
+      "name": "mi-admin",
+      "displayName": "MI Admin (Test)",
+      "email": "mi-admin@spglobal-test.local",
+      "password": "Test@12345",
+      "team": "MarketImpactAdmins"
+    },
+    {
+      "name": "pas-writer",
+      "displayName": "PAS Writer (Test)",
+      "email": "pas-writer@spglobal-test.local",
+      "password": "Test@12345",
+      "team": "PASWriters"
+    },
+    {
+      "name": "default-reader",
+      "displayName": "Default Reader (Test)",
+      "email": "default-reader@spglobal-test.local",
+      "password": "Test@12345",
+      "team": "DefaultReaders"
+    }
+  ],
+
+  "glossaries": [
+    {
+      "name": "MarketImpactGlossary",
+      "displayName": "Market Impact Glossary",
+      "description": "Glossary for Market Impact domain — tests domain-scoped write/admin access",
+      "domain": "marketimpact",
+      "owner_team": "MarketImpactAdmins",
+      "terms": [
+        { "name": "AlphaSignal",     "displayName": "Alpha Signal",     "description": "Proprietary signal measuring excess return potential" },
+        { "name": "ImpactCost",      "displayName": "Impact Cost",      "description": "Estimated market impact cost of executing a trade" },
+        { "name": "LiquidityScore",  "displayName": "Liquidity Score",  "description": "Composite score measuring asset liquidity" }
+      ]
+    },
+    {
+      "name": "PASGlossary",
+      "displayName": "PAS Glossary",
+      "description": "Glossary for PAS domain — used for cross-domain isolation testing",
+      "domain": "pas",
+      "owner_team": "PASAdmins",
+      "terms": [
+        { "name": "PortfolioRisk",   "displayName": "Portfolio Risk",   "description": "Aggregate risk metric for a portfolio" },
+        { "name": "ExposureLimit",   "displayName": "Exposure Limit",   "description": "Maximum allowed exposure to a single counterparty" }
+      ]
+    },
+    {
+      "name": "PlaygroundGlossary",
+      "displayName": "Playground Glossary",
+      "description": "Sandbox glossary for experimentation",
+      "domain": "playground",
+      "terms": [
+        { "name": "TestTerm", "displayName": "Test Term", "description": "A test term for sandbox experimentation" }
+      ]
+    }
+  ],
+
+  "test_matrix": [
+    {
+      "name": "MI Reader — can view MI glossary",
+      "user": "mi-reader@spglobal-test.local",
+      "resource_type": "glossary",
+      "resource": "MarketImpactGlossary",
+      "expect": {
+        "ViewAll": "allow",
+        "ViewBasic": "allow",
+        "Create": "notAllow",
+        "EditAll": "notAllow",
+        "Delete": "notAllow",
+        "EditDescription": "notAllow"
+      }
+    },
+    {
+      "name": "MI Writer — can create/edit in MI glossary (no delete)",
+      "user": "mi-writer@spglobal-test.local",
+      "resource_type": "glossary",
+      "resource": "MarketImpactGlossary",
+      "expect": {
+        "ViewAll": "allow",
+        "Create": "allow",
+        "EditAll": "allow",
+        "EditDescription": "allow",
+        "EditCustomFields": "allow",
+        "Delete": "notAllow"
+      }
+    },
+    {
+      "name": "MI Admin — full CRUD on MI glossary",
+      "user": "mi-admin@spglobal-test.local",
+      "resource_type": "glossary",
+      "resource": "MarketImpactGlossary",
+      "expect": {
+        "ViewAll": "allow",
+        "Create": "allow",
+        "EditAll": "allow",
+        "EditDescription": "allow",
+        "EditCustomFields": "allow",
+        "Delete": "allow",
+        "EditOwners": "allow"
+      }
+    },
+    {
+      "name": "MI Admin — blocked from PAS glossary (cross-domain)",
+      "user": "mi-admin@spglobal-test.local",
+      "resource_type": "glossary",
+      "resource": "PASGlossary",
+      "expect": {
+        "ViewAll": "allow",
+        "ViewBasic": "allow",
+        "Create": "notAllow",
+        "EditAll": "notAllow",
+        "Delete": "notAllow"
+      }
+    },
+    {
+      "name": "MI Writer — blocked from PAS glossary (cross-domain)",
+      "user": "mi-writer@spglobal-test.local",
+      "resource_type": "glossary",
+      "resource": "PASGlossary",
+      "expect": {
+        "ViewAll": "allow",
+        "Create": "notAllow",
+        "EditAll": "notAllow",
+        "Delete": "notAllow"
+      }
+    },
+    {
+      "name": "PAS Writer — can create/edit in PAS glossary",
+      "user": "pas-writer@spglobal-test.local",
+      "resource_type": "glossary",
+      "resource": "PASGlossary",
+      "expect": {
+        "ViewAll": "allow",
+        "Create": "allow",
+        "EditAll": "allow",
+        "EditDescription": "allow",
+        "Delete": "notAllow"
+      }
+    },
+    {
+      "name": "PAS Writer — blocked from MI glossary (cross-domain)",
+      "user": "pas-writer@spglobal-test.local",
+      "resource_type": "glossary",
+      "resource": "MarketImpactGlossary",
+      "expect": {
+        "ViewAll": "allow",
+        "Create": "notAllow",
+        "EditAll": "notAllow",
+        "Delete": "notAllow"
+      }
+    },
+    {
+      "name": "Default Reader — view-only on MI glossary",
+      "user": "default-reader@spglobal-test.local",
+      "resource_type": "glossary",
+      "resource": "MarketImpactGlossary",
+      "expect": {
+        "ViewAll": "allow",
+        "ViewBasic": "allow",
+        "Create": "notAllow",
+        "EditAll": "notAllow",
+        "Delete": "notAllow"
+      }
+    },
+    {
+      "name": "Default Reader — view-only on PAS glossary",
+      "user": "default-reader@spglobal-test.local",
+      "resource_type": "glossary",
+      "resource": "PASGlossary",
+      "expect": {
+        "ViewAll": "allow",
+        "ViewBasic": "allow",
+        "Create": "notAllow",
+        "EditAll": "notAllow",
+        "Delete": "notAllow"
+      }
+    },
+    {
+      "name": "MI Writer — can edit MI glossary term",
+      "user": "mi-writer@spglobal-test.local",
+      "resource_type": "glossaryTerm",
+      "resource": "MarketImpactGlossary.AlphaSignal",
+      "expect": {
+        "ViewAll": "allow",
+        "EditAll": "allow",
+        "EditDescription": "allow",
+        "Delete": "notAllow"
+      }
+    },
+    {
+      "name": "MI Admin — full CRUD on MI glossary term",
+      "user": "mi-admin@spglobal-test.local",
+      "resource_type": "glossaryTerm",
+      "resource": "MarketImpactGlossary.AlphaSignal",
+      "expect": {
+        "ViewAll": "allow",
+        "EditAll": "allow",
+        "EditDescription": "allow",
+        "Delete": "allow"
+      }
+    },
+    {
+      "name": "MI Reader — blocked from editing MI glossary term",
+      "user": "mi-reader@spglobal-test.local",
+      "resource_type": "glossaryTerm",
+      "resource": "MarketImpactGlossary.AlphaSignal",
+      "expect": {
+        "ViewAll": "allow",
+        "EditAll": "notAllow",
+        "EditDescription": "notAllow",
+        "Delete": "notAllow"
+      }
+    }
+  ]
+}

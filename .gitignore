@@ -1,0 +1,27 @@
+# Reports (generated)
+reports/*.json
+
+# Docker volumes
+docker-volume/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.venv/
+
+# uv
+uv.lock
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Downloaded compose files (version-specific, fetched via get-compose.sh)
+docker-compose-openmetadata.yml
+
+# Environment
+.env
+scripts/test_runner.py

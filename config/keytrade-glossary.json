@@ -1,0 +1,209 @@
+{
+  "description": "KeyTrade glossary governance RBAC scenario",
+  "omd_version": "1.11.7",
+  "server": {
+    "base_url": "http://localhost:8585/api/v1",
+    "auth_type": "basic",
+    "admin_email": "admin@open-metadata.org",
+    "admin_password": "admin",
+    "api_token": ""
+  },
+  "domains": [
+    { "name": "Marketing", "description": "Marketing domain", "domainType": "Aggregate" },
+    { "name": "Sales", "description": "Sales domain for cross-domain isolation testing", "domainType": "Aggregate" }
+  ],
+  "policies": [
+    {
+      "name": "DataConsumerViewAllPolicy",
+      "displayName": "Data Consumer ViewAll Policy",
+      "description": "Base policy granting view access to all data assets for all users.",
+      "rules": [
+        {
+          "name": "AllowViewAll",
+          "description": "Allow all users to view all resources",
+          "effect": "allow",
+          "operations": ["ViewAll", "ViewBasic", "ViewCustomFields"],
+          "resources": ["All"]
+        }
+      ]
+    },
+    {
+      "name": "DomainOnlyGovernancePolicy",
+      "displayName": "Domain Only Governance Policy",
+      "description": "Restricts all write/edit/delete operations to users within the matching domain.",
+      "rules": [
+        {
+          "name": "DenyWriteOutsideDomain",
+          "description": "Deny all write operations when user is not in the resource domain",
+          "effect": "deny",
+          "operations": ["Create", "Delete", "EditAll", "EditCustomFields", "EditDescription", "EditDisplayName", "EditOwners", "EditReviewers", "EditTags", "EditGlossaryTerms", "EditTier", "EditEntityRelationship", "EditLineage", "EditPolicy", "EditSampleData"],
+          "resources": ["All"],
+          "condition": "!hasDomain()"
+        },
+        {
+          "name": "AllowWriteInDomain",
+          "description": "Allow all operations when user is in the resource domain",
+          "effect": "allow",
+          "operations": ["All"],
+          "resources": ["All"],
+          "condition": "hasDomain()"
+        }
+      ]
+    },
+    {
+      "name": "DataOwnerGlossaryDenyPolicy",
+      "displayName": "Data Owner Glossary Deny Policy",
+      "description": "Prevents Data Owners from creating, editing, or deleting glossaries and glossary terms.",
+      "rules": [
+        {
+          "name": "DenyGlossaryEdits",
+          "description": "Deny all write operations on glossaries for Data Owners",
+          "effect": "deny",
+          "operations": ["Create", "Delete", "EditAll", "EditDescription", "EditDisplayName", "EditOwners", "EditReviewers", "EditTags", "EditGlossaryTerms", "EditCustomFields"],
+          "resources": ["glossary"]
+        },
+        {
+          "name": "DenyGlossaryTermEdits",
+          "description": "Deny all write operations on glossary terms for Data Owners",
+          "effect": "deny",
+          "operations": ["Create", "Delete", "EditAll", "EditDescription", "EditDisplayName", "EditOwners", "EditReviewers", "EditTags", "EditGlossaryTerms", "EditCustomFields"],
+          "resources": ["glossaryTerm"]
+        }
+      ]
+    }
+  ],
+  "roles": [
+    {
+      "name": "DataSteward",
+      "description": "Data Steward role - creates and edits glossary terms within their domain.",
+      "policies": ["DataConsumerViewAllPolicy", "DomainOnlyGovernancePolicy"]
+    },
+    {
+      "name": "DataOwner",
+      "description": "Data Owner role - reviews and approves/denies glossary terms. Cannot edit directly.",
+      "policies": ["DataConsumerViewAllPolicy", "DomainOnlyGovernancePolicy", "DataOwnerGlossaryDenyPolicy"]
+    },
+    {
+      "name": "DataConsumer",
+      "description": "Data Consumer role - view-only access to all data assets.",
+      "policies": ["DataConsumerViewAllPolicy"]
+    }
+  ],
+  "teams": [
+    {
+      "name": "MarketingTeam",
+      "displayName": "Marketing Team",
+      "teamType": "BusinessUnit",
+      "domain": "Marketing"
+    },
+    {
+      "name": "MarketingDataStewards",
+      "displayName": "Marketing Data Stewards",
+      "teamType": "Group",
+      "parent": "MarketingTeam",
+      "role": "DataSteward",
+      "domain": "Marketing"
+    },
+    {
+      "name": "MarketingDataOwners",
+      "displayName": "Marketing Data Owners",
+      "teamType": "Group",
+      "parent": "MarketingTeam",
+      "role": "DataOwner",
+      "domain": "Marketing"
+    },
+    {
+      "name": "DataConsumers",
+      "displayName": "Data Consumers",
+      "teamType": "Group",
+      "role": "DataConsumer"
+    }
+  ],
+  "users": [
+    { "name": "maxime", "displayName": "Maxime Deleuze", "email": "maxime@keytrade-test.local", "password": "Test@12345", "team": "MarketingDataStewards" },
+    { "name": "owner",  "displayName": "Data Owner Test User", "email": "owner@keytrade-test.local",  "password": "Test@12345", "team": "MarketingDataOwners" },
+    { "name": "consumer", "displayName": "Consumer Test User", "email": "consumer@keytrade-test.local", "password": "Test@12345", "team": "DataConsumers" }
+  ],
+  "glossaries": [
+    {
+      "name": "MarketingGlossary",
+      "displayName": "Marketing Glossary",
+      "description": "Marketing glossary. Owner = Data Steward team. Reviewer = Data Owner team.",
+      "owner_team": "MarketingDataStewards",
+      "reviewer_team": "MarketingDataOwners",
+      "domain": "Marketing",
+      "terms": [
+        { "name": "CampaignROI", "displayName": "Campaign ROI", "description": "Return on investment metric for marketing campaigns" },
+        { "name": "LeadConversionRate", "displayName": "Lead Conversion Rate", "description": "Percentage of leads that convert to customers" },
+        { "name": "AcquisitionLeads", "displayName": "Acquisition Leads", "description": "Number of new leads acquired through marketing channels" }
+      ]
+    },
+    {
+      "name": "SalesGlossary",
+      "displayName": "Sales Glossary",
+      "description": "Sales glossary for cross-domain isolation testing.",
+      "domain": "Sales",
+      "terms": [
+        { "name": "QuotaAttainment", "displayName": "Quota Attainment", "description": "Percentage of sales quota achieved in a given period" }
+      ]
+    }
+  ],
+  "test_matrix": [
+    {
+      "name": "Steward creates/edits in own domain",
+      "user": "maxime@keytrade-test.local",
+      "resource_type": "glossary",
+      "resource": "MarketingGlossary",
+      "expect": { "Create": "allow", "EditAll": "allow", "ViewAll": "allow", "Delete": "allow" }
+    },
+    {
+      "name": "Steward edits glossary term in own domain",
+      "user": "maxime@keytrade-test.local",
+      "resource_type": "glossaryTerm",
+      "resource": "MarketingGlossary.CampaignROI",
+      "expect": { "Create": "allow", "EditAll": "allow", "EditDescription": "allow", "ViewAll": "allow" }
+    },
+    {
+      "name": "Owner blocked from glossary edits in own domain",
+      "user": "owner@keytrade-test.local",
+      "resource_type": "glossary",
+      "resource": "MarketingGlossary",
+      "expect": { "Create": "deny", "EditAll": "deny", "Delete": "deny", "ViewAll": "allow" }
+    },
+    {
+      "name": "Owner blocked from term edits in own domain",
+      "user": "owner@keytrade-test.local",
+      "resource_type": "glossaryTerm",
+      "resource": "MarketingGlossary.CampaignROI",
+      "expect": { "Create": "deny", "EditAll": "deny", "EditDescription": "deny", "ViewAll": "allow" }
+    },
+    {
+      "name": "Consumer has view-only on glossary",
+      "user": "consumer@keytrade-test.local",
+      "resource_type": "glossary",
+      "resource": "MarketingGlossary",
+      "expect": { "Create": "notAllow", "EditAll": "notAllow", "Delete": "notAllow", "ViewAll": "allow" }
+    },
+    {
+      "name": "Consumer has view-only on term",
+      "user": "consumer@keytrade-test.local",
+      "resource_type": "glossaryTerm",
+      "resource": "MarketingGlossary.CampaignROI",
+      "expect": { "Create": "notAllow", "EditAll": "notAllow", "ViewAll": "allow" }
+    },
+    {
+      "name": "Steward blocked from Sales glossary (cross-domain)",
+      "user": "maxime@keytrade-test.local",
+      "resource_type": "glossary",
+      "resource": "SalesGlossary",
+      "expect": { "Create": "deny", "EditAll": "deny", "Delete": "deny", "ViewAll": "allow" }
+    },
+    {
+      "name": "Owner blocked from Sales glossary (cross-domain)",
+      "user": "owner@keytrade-test.local",
+      "resource_type": "glossary",
+      "resource": "SalesGlossary",
+      "expect": { "Create": "deny", "EditAll": "deny", "Delete": "deny", "ViewAll": "allow" }
+    }
+  ]
+}

@@ -329,8 +329,9 @@
         "Create": "notAllow",
         "EditAll": "notAllow",
         "Delete": "notAllow",
-        "EditDescription": "notAllow"
-      }
+        "EditDescription": "allow"
+      },
+      "_note": "EditDescription=allow due to OMD built-in DataConsumerPolicy granting EditDescription to all users"
     },
     {
       "name": "MI Writer — can create/edit in MI glossary (no delete)",
@@ -469,9 +470,10 @@
       "expect": {
         "ViewAll": "allow",
         "EditAll": "notAllow",
-        "EditDescription": "notAllow",
+        "EditDescription": "allow",
         "Delete": "notAllow"
-      }
+      },
+      "_note": "EditDescription=allow due to OMD built-in DataConsumerPolicy granting EditDescription to all users"
     }
   ]
 }

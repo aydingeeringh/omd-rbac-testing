@@ -82,16 +82,13 @@ class OMDClient:
         """Create a user with working login credentials.
 
         Strategy:
-        1. Self-signup via POST /users/signup (creates basic_auth entry)
-        2. Confirm email via Docker exec into the MySQL DB (extracts token)
-        3. Assign teams via admin PATCH
-        4. Returns the user ID
+        1. Admin PUT to create user (with teams)
+        2. Bcrypt-hash the password and set authenticationMechanism
+           directly in the DB via Docker exec (same pattern as admin user)
+        3. Mark email as verified in the DB
 
-        If signup fails (user exists), falls back to admin PUT + changePassword.
-        If Docker DB access fails, falls back gracefully (user created but login may not work).
+        Returns the user ID or empty string on failure.
         """
-        pwd_b64 = base64.b64encode(password.encode()).decode()
-
         # Step 1: Try to delete existing user first (idempotent)
         existing = self.get(f"/users/name/{name}")
         if existing.get("id"):
@@ -100,118 +97,110 @@ class OMDClient:
                 headers=self._headers(),
             )
 
-        # Step 2: Signup (creates basic_auth_mechanism entry in DB)
-        first_name = display_name.split()[0] if display_name else name
-        last_name = display_name.split()[-1] if display_name and len(display_name.split()) > 1 else "User"
-        signup_resp = self._http.post(
-            "/users/signup",
-            json={
-                "firstName": first_name,
-                "lastName": last_name,
-                "email": email,
-                "password": pwd_b64,
-            },
-        )
+        # Step 2: Create user via admin PUT
+        body: dict = {
+            "name": name,
+            "displayName": display_name or name,
+            "email": email,
+            "isBot": False,
+            "isAdmin": False,
+        }
+        if team_ids:
+            body["teams"] = team_ids
+        resp = self.put("/users", body)
+        if resp.status_code not in (200, 201):
+            return ""
 
-        if signup_resp.status_code not in (200, 201):
-            # Fallback: admin PUT
-            body: dict = {
-                "name": name,
-                "displayName": display_name or name,
-                "email": email,
-                "isBot": False,
-                "isAdmin": False,
-            }
-            if team_ids:
-                body["teams"] = team_ids
-            resp = self.put("/users", body)
-            return self.extract_id(resp.json()) if resp.status_code in (200, 201) else ""
+        user_id = resp.json().get("id", "")
 
-        user_data = signup_resp.json()
-        user_id = user_data.get("id", "")
-
-        # Step 3: Confirm email via Docker DB
-        self._confirm_email_via_docker(email)
-
-        # Step 4: Assign teams via admin PATCH (signup doesn't set teams)
-        if team_ids and user_id:
-            self.patch(f"/users/{user_id}", [
-                {"op": "replace", "path": "/teams", "value": [{"id": tid, "type": "team"} for tid in team_ids]}
-            ])
-
-        # Step 5: Set display name if different from signup default
-        if display_name and user_id:
-            self.patch(f"/users/{user_id}", [
-                {"op": "replace", "path": "/displayName", "value": display_name}
-            ])
+        # Step 3: Set authenticationMechanism + isEmailVerified in DB
+        self._set_basic_auth_in_db(email, password)
 
         return user_id
 
-    def _confirm_email_via_docker(self, email: str) -> bool:
-        """Confirm a user's email by extracting the verification token from the OMD MySQL DB via Docker.
+    def _set_basic_auth_in_db(self, email: str, password: str) -> bool:
+        """Set bcrypt password hash and email verification directly in the DB.
 
-        This is necessary because OMD basic auth requires email confirmation before login,
-        and Docker environments typically don't have SMTP configured.
+        Uses the same authenticationMechanism JSON structure as the admin user:
+        {"config": {"password": "$2a$12$..."}, "authType": "BASIC"}
         """
-        # Find the OMD MySQL container
-        container = self._find_mysql_container()
+        import bcrypt
+
+        container, db_type = self._find_db_container()
         if not container:
             return False
 
-        try:
-            # Query the token_relation table for the email verification token
-            sql = (
-                f"SELECT token FROM openmetadata_db.token_relation "
-                f"WHERE userid = (SELECT id FROM openmetadata_db.user_entity WHERE json->>'$.email' = '{email}') "
-                f"AND tokenType = 'EMAIL_VERIFICATION' "
-                f"ORDER BY expiryDate DESC LIMIT 1"
-            )
-            result = subprocess.run(
-                ["docker", "exec", container, "mysql", "-u", "openmetadata_user",
-                 "-popenmetadata_password", "-N", "-e", sql],
-                capture_output=True, text=True, timeout=10,
-            )
+        # Bcrypt-hash the password (same as OMD does internally)
+        pwd_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt(12)).decode()
+        # Escape single quotes for SQL
+        pwd_hash_escaped = pwd_hash.replace("'", "''")
 
-            token = result.stdout.strip()
-            if not token:
-                # Try alternative: directly update the user entity to mark email as verified
-                sql_update = (
+        auth_json = (
+            '{"config": {"password": "' + pwd_hash_escaped + '"}, "authType": "BASIC"}'
+        )
+
+        try:
+            if db_type == "postgres":
+                sql = (
+                    f"UPDATE user_entity SET json = jsonb_set("
+                    f"jsonb_set(json::jsonb, '{{authenticationMechanism}}', '{auth_json}'::jsonb), "
+                    f"'{{isEmailVerified}}', 'true'"
+                    f")::json "
+                    f"WHERE json::jsonb->>'email' = '{email}'"
+                )
+                result = subprocess.run(
+                    ["docker", "exec", container, "psql", "-U", "openmetadata_user",
+                     "-d", "openmetadata_db", "-c", sql],
+                    capture_output=True, text=True, timeout=10,
+                )
+                return result.returncode == 0
+            else:
+                # MySQL
+                sql = (
                     f"UPDATE openmetadata_db.user_entity "
-                    f"SET json = JSON_SET(json, '$.isEmailVerified', true) "
+                    f"SET json = JSON_SET(json, "
+                    f"'$.authenticationMechanism', CAST('{auth_json}' AS JSON), "
+                    f"'$.isEmailVerified', true) "
                     f"WHERE json->>'$.email' = '{email}'"
                 )
                 subprocess.run(
                     ["docker", "exec", container, "mysql", "-u", "openmetadata_user",
-                     "-popenmetadata_password", "-e", sql_update],
+                     "-popenmetadata_password", "-e", sql],
                     capture_output=True, text=True, timeout=10,
                 )
                 return True
 
-            # Confirm via the API
-            resp = self._http.put(
-                f"/users/registrationConfirmation?user={token}",
-            )
-            return resp.status_code == 200
-
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
             return False
 
-    def _find_mysql_container(self) -> str:
-        """Find the running OMD MySQL Docker container name."""
+    def _find_db_container(self) -> tuple[str, str]:
+        """Find the running OMD database Docker container (PostgreSQL or MySQL).
+
+        Returns (container_name, db_type) where db_type is 'postgres' or 'mysql'.
+        Returns ('', '') if not found.
+        """
         try:
-            result = subprocess.run(
-                ["docker", "ps", "--filter", "ancestor=mysql:8", "--format", "{{.Names}}"],
-                capture_output=True, text=True, timeout=5,
-            )
-            containers = result.stdout.strip().split("\n")
-            # Look for openmetadata-related container
-            for c in containers:
-                if c and ("openmetadata" in c.lower() or "mysql" in c.lower()):
-                    return c
-            # Return first MySQL container if any
-            return containers[0] if containers and containers[0] else ""
+            # Check for PostgreSQL containers first
+            for image_filter in ["postgres", "mysql"]:
+                result = subprocess.run(
+                    ["docker", "ps", "--format", "{{.Names}}\t{{.Image}}"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                for line in result.stdout.strip().split("\n"):
+                    if not line:
+                        continue
+                    parts = line.split("\t")
+                    if len(parts) != 2:
+                        continue
+                    name, image = parts
+                    if "postgres" in image.lower():
+                        return (name, "postgres")
+                    if "mysql" in image.lower():
+                        return (name, "mysql")
+                break  # Only need to run docker ps once
+            return ("", "")
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-            return ""
+            return ("", "")
 
     # ── Generic REST helpers ────────────────────────────────────────────
     def _headers(self, token: str | None = None, patch: bool = False) -> dict:

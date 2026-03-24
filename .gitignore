@@ -27,3 +27,6 @@ docker-compose-mysql.yml
 # Environment
 .env
 scripts/test_runner.py
+
+# Client-specific configs (not for public repo)
+config/spglobal-domains.json

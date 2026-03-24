@@ -97,6 +97,81 @@ def create_or_update_role(client: OMDClient, name: str, policy_csv: str, desc: s
 
 # ── Provisioning steps ──────────────────────────────────────────────────
 
+def restrict_default_policies(client: OMDClient, cfg: dict) -> None:
+    """Restrict or disable OMD's built-in default policies.
+
+    OMD ships with a DataConsumerPolicy that grants EditDescription to ALL
+    users by default.  This undermines domain-scoped RBAC because even users
+    with no explicit write role can edit descriptions on any resource.
+
+    Config format:
+        "default_policy_overrides": {
+            "DataConsumerPolicy": {
+                "action": "restrict",
+                "remove_operations": ["EditDescription"]
+            }
+        }
+
+    Supported actions:
+        - restrict: Remove specified operations from all rules in the policy
+        - disable:  Delete all rules from the policy (effectively disabling it)
+    """
+    overrides = cfg.get("default_policy_overrides", {})
+    if not overrides:
+        return
+
+    header("0. Restricting Default Policies")
+
+    for policy_name, override in overrides.items():
+        action = override.get("action", "restrict")
+
+        # Fetch the current policy with its rules
+        data = client.get(f"/policies/name/{policy_name}?fields=rules")
+        if not data.get("id"):
+            warn(f"{policy_name} not found — skipping")
+            continue
+
+        pid = data["id"]
+        current_rules = data.get("rules", [])
+
+        if action == "disable":
+            # Remove all rules — policy exists but does nothing
+            client.patch(f"/policies/{pid}", [
+                {"op": "replace", "path": "/rules", "value": []}
+            ])
+            log(f"{policy_name} disabled (all rules removed)")
+
+        elif action == "restrict":
+            remove_ops = set(override.get("remove_operations", []))
+            if not remove_ops:
+                warn(f"{policy_name} restrict: no operations specified")
+                continue
+
+            new_rules = []
+            for rule in current_rules:
+                original_ops = rule.get("operations", [])
+                filtered_ops = [op for op in original_ops if op not in remove_ops]
+
+                if not filtered_ops:
+                    # Rule has no operations left — drop it entirely
+                    warn(f"  {rule.get('name', '?')}: all operations removed — rule dropped")
+                    continue
+
+                rule["operations"] = filtered_ops
+                new_rules.append(rule)
+
+            # PATCH the updated rules
+            client.patch(f"/policies/{pid}", [
+                {"op": "replace", "path": "/rules", "value": new_rules}
+            ])
+
+            removed = ", ".join(sorted(remove_ops))
+            log(f"{policy_name}: removed [{removed}] from rules")
+
+        else:
+            warn(f"{policy_name}: unknown action '{action}' — skipping")
+
+
 def provision_domains(client: OMDClient, cfg: dict) -> None:
     header("1. Creating Domains")
     for d in cfg.get("domains", []):
@@ -117,11 +192,84 @@ def provision_roles(client: OMDClient, cfg: dict) -> None:
         create_or_update_role(client, r["name"], policy_csv, r["description"])
 
 
+def generate_teams_from_domains(cfg: dict) -> list[dict]:
+    """Auto-generate the standard team structure from domains.
+
+    When 'auto_teams' is true in the config, generates for each domain:
+      - {Domain}Team (BusinessUnit) — parent team for the domain
+      - {Domain}Readers (Group) — DomainReader role, child of {Domain}Team
+      - {Domain}Writers (Group) — DomainWriter role, child of {Domain}Team
+      - {Domain}Admins (Group)  — DomainAdmin role, child of {Domain}Team
+
+    Plus a global DefaultReaders group with the DomainReader role (no domain).
+
+    The role names can be customised via 'auto_teams_roles':
+        "auto_teams_roles": {"reader": "DomainReader", "writer": "DomainWriter", "admin": "DomainAdmin"}
+    """
+    role_map = cfg.get("auto_teams_roles", {
+        "reader": "DomainReader",
+        "writer": "DomainWriter",
+        "admin": "DomainAdmin",
+    })
+
+    teams: list[dict] = []
+
+    for d in cfg.get("domains", []):
+        domain_name = d["name"]
+        display = d.get("displayName", domain_name.title())
+
+        # Derive CamelCase prefix from displayName (e.g. "Market Impact" -> "MarketImpact")
+        prefix = display.replace(" ", "")
+
+        # Parent BusinessUnit
+        teams.append({
+            "name": f"{prefix}Team",
+            "displayName": f"{display} Team",
+            "teamType": "BusinessUnit",
+            "domain": domain_name,
+        })
+
+        # Reader / Writer / Admin groups
+        for tier, suffix in [("reader", "Readers"), ("writer", "Writers"), ("admin", "Admins")]:
+            role = role_map.get(tier, "")
+            teams.append({
+                "name": f"{prefix}{suffix}",
+                "displayName": f"{display} {suffix}",
+                "teamType": "Group",
+                "parent": f"{prefix}Team",
+                "role": role,
+                "domain": domain_name,
+            })
+
+    # Global DefaultReaders (no domain — simulates a new SSO user's landing spot)
+    teams.append({
+        "name": "DefaultReaders",
+        "displayName": "Default Readers",
+        "teamType": "Group",
+        "role": role_map.get("reader", "DomainReader"),
+    })
+
+    return teams
+
+
 def provision_teams(client: OMDClient, cfg: dict) -> None:
     header("4. Creating Teams")
 
+    # Use auto-generated teams if auto_teams is enabled, otherwise use explicit list
+    if cfg.get("auto_teams", False):
+        teams = generate_teams_from_domains(cfg)
+        log(f"auto_teams: generated {len(teams)} teams from {len(cfg.get('domains', []))} domains")
+    else:
+        teams = cfg.get("teams", [])
+
+    # Merge any extra teams defined explicitly (e.g. cross-domain groups)
+    extra_teams = cfg.get("extra_teams", [])
+    if extra_teams:
+        teams = teams + extra_teams
+        log(f"  + {len(extra_teams)} extra teams from config")
+
     # Pass 1: Create all teams (without parent/role/domain — those need IDs)
-    for t in cfg.get("teams", []):
+    for t in teams:
         name = t["name"]
         team_type = t["teamType"]
         display = t.get("displayName", name)
@@ -134,7 +282,7 @@ def provision_teams(client: OMDClient, cfg: dict) -> None:
         })
 
     # Pass 2: Assign parent, role, domain via PUT (idempotent, correct field formats)
-    for t in cfg.get("teams", []):
+    for t in teams:
         name = t["name"]
         team_type = t["teamType"]
         display = t.get("displayName", name)
@@ -363,6 +511,7 @@ def main() -> None:
 
     log(f"Server is up! (auth={client.auth_type})")
 
+    restrict_default_policies(client, cfg)
     provision_domains(client, cfg)
     provision_policies(client, cfg)
     provision_roles(client, cfg)

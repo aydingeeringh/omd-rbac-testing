@@ -37,14 +37,14 @@ cd omd-rbac-testing
 uv sync
 
 # 2. Download the official docker-compose for your OMD version
-#    (the compose structure changes between versions — always use this)
+#    Defaults to the full-stack postgres compose (includes Postgres, ES, OMD server, migration)
 ./scripts/get-compose.sh 1.12.3        # or any version: 1.11.7, 1.6.1, etc.
 
 # 3. Start OMD (ensure Docker has >= 6 GB RAM, 4 vCPUs)
-docker compose -f docker-compose-openmetadata.yml up -d
+docker compose -f docker-compose-postgres.yml up -d
 # Wait ~60 seconds for all services to initialise
 
-# 4. Provision RBAC (domains, policies, roles, teams, users, glossaries)
+# 4. Provision RBAC (locks down defaults, creates domains, policies, roles, teams, users, glossaries)
 uv run omd-setup --config config/keytrade-glossary.json
 
 # 5. Run the permission test matrix
@@ -88,13 +88,14 @@ The shell wrappers in `scripts/` are optional convenience scripts (macOS + Linux
 omd-rbac-testing/
 ├── src/omd_rbac/               # Python package
 │   ├── __init__.py
-│   ├── client.py               # OMD API client (httpx-based)
+│   ├── client.py               # OMD API client (httpx-based, includes DB auth)
 │   ├── setup.py                # RBAC provisioner (omd-setup CLI)
 │   ├── test_runner.py          # Permission matrix tester (omd-test CLI)
 │   └── preflight.py            # Environment checker (omd-check CLI)
 ├── config/
-│   └── keytrade-glossary.json  # Full scenario config
+│   └── keytrade-glossary.json  # Example scenario config
 ├── scripts/                    # Optional shell wrappers
+│   ├── get-compose.sh          # Downloads official OMD docker-compose
 │   ├── setup.sh
 │   ├── test-permissions.sh
 │   └── check.sh
@@ -102,8 +103,6 @@ omd-rbac-testing/
 │   └── SKILL.md                # Claude skill for interactive RBAC testing
 ├── reports/                    # Auto-generated JSON test reports
 ├── pyproject.toml              # Python project config (uv / pip)
-├── docker-compose.yml          # OMD stack (version via OMD_VERSION env var)
-├── .env.example                # Example environment config
 └── README.md
 ```
 
@@ -116,13 +115,54 @@ omd-rbac-testing/
 | `uv run omd-test -c CONFIG` | Run permission matrix tests, generate pass/fail report |
 | `uv run omd-test -c CONFIG -v` | Verbose — also shows which policy/rule produced each result |
 
+## Key Features
+
+### Default Policy Lockdown
+
+OMD ships with built-in policies (`DataConsumerPolicy`, `OrganizationPolicy`) that grant edit permissions to all users by default. The framework automatically restricts these during setup via `default_policy_overrides` in the config:
+
+```json
+"default_policy_overrides": {
+  "DataConsumerPolicy": {
+    "action": "restrict",
+    "remove_operations": ["EditDescription", "EditTags", "EditGlossaryTerms", "EditTier", "EditCertification"]
+  },
+  "OrganizationPolicy": {
+    "action": "restrict",
+    "remove_operations": ["EditOwners"]
+  }
+}
+```
+
+This ensures new users (SSO, admin-added) get strictly view-only access until explicitly assigned to a domain team with a role.
+
+### Auto-Generated Team Structure
+
+Instead of manually defining teams for each domain, set `"auto_teams": true` and the provisioner generates the standard structure automatically:
+
+```json
+"domains": [
+  { "name": "engineering", "displayName": "Engineering", "domainType": "Aggregate" }
+],
+"auto_teams": true
+```
+
+This creates: `EngineeringTeam` (BusinessUnit), `EngineeringReaders`, `EngineeringWriters`, `EngineeringAdmins` (Groups with appropriate roles), plus a global `DefaultReaders` group. Adding a new domain is a one-liner.
+
+### DRY Domain-Scoped Policies
+
+Policies use `hasDomain()` / `!hasDomain()` conditions so they're defined once and automatically scope to whichever domain a user's team belongs to. Three policies + three roles cover unlimited domains.
+
+### Sample Data Protection
+
+Read-only roles include a `DenySampleData` deny rule to prevent readers from viewing raw data previews on tables, while still allowing metadata browsing.
+
 ## Authentication
 
 Two modes, configurable via config JSON or environment variables:
 
 ### Basic Auth (default — local Docker / self-hosted)
 
-Config:
 ```json
 {
   "server": {
@@ -133,7 +173,7 @@ Config:
 }
 ```
 
-Or environment:
+Or via environment:
 ```bash
 export OMD_AUTH_TYPE=basic
 export OMD_ADMIN_EMAIL=admin@open-metadata.org
@@ -142,7 +182,6 @@ export OMD_ADMIN_PASSWORD=admin
 
 ### Token Auth (Collate cloud / JWT)
 
-Config:
 ```json
 {
   "server": {
@@ -152,7 +191,7 @@ Config:
 }
 ```
 
-Or environment:
+Or via environment:
 ```bash
 export OMD_AUTH_TYPE=token
 export OMD_API_TOKEN=your-jwt-or-api-token
@@ -160,21 +199,21 @@ export OMD_API_TOKEN=your-jwt-or-api-token
 
 Environment variables always override the config file — keep credentials out of version control.
 
-## OMD Version
+## Docker Compose
 
-The docker-compose structure changes between OMD versions (different Elasticsearch versions, env vars, services). Always use the helper script to download the official compose file for your target version:
+The compose structure changes between OMD versions. Always use the helper script to download the official compose file:
 
 ```bash
-# Download the correct compose for any version
+# Download the full-stack postgres compose (default)
 ./scripts/get-compose.sh 1.12.3
 
-# Start with that compose file
-docker compose -f docker-compose-openmetadata.yml up -d
+# Other variants available via OMD_COMPOSE env var:
+OMD_COMPOSE=docker-compose-mysql.yml ./scripts/get-compose.sh 1.12.3       # MySQL backend
+OMD_COMPOSE=docker-compose-openmetadata.yml ./scripts/get-compose.sh 1.12.3 # Server only (BYO database)
+
+# Start
+docker compose -f docker-compose-postgres.yml up -d
 ```
-
-The repo also includes a `docker-compose.yml` with `${OMD_VERSION:-1.11.7}` image tags for backward compatibility, but `get-compose.sh` + the official file is the recommended approach.
-
-The `omd_version` field in the config JSON is informational (labels which version the scenario was tested against).
 
 ## Config File Format
 
@@ -182,12 +221,14 @@ The JSON config drives both setup and testing:
 
 | Section | Purpose |
 |---------|---------|
-| `omd_version` | Informational OMD version label |
-| `server` | Base URL, auth type, credentials / token |
-| `domains` | Domain definitions (name, type) |
+| `default_policy_overrides` | Lock down OMD's built-in permissive policies |
+| `domains` | Domain definitions (name, displayName, type) |
+| `auto_teams` | Set `true` to auto-generate team structure from domains |
+| `auto_teams_roles` | Custom role name mapping (optional) |
 | `policies` | Policy definitions with rules, operations, conditions |
 | `roles` | Role definitions with policy assignments |
-| `teams` | Team hierarchy, parent/child, role & domain assignments |
+| `teams` | Explicit team hierarchy (used when `auto_teams` is false) |
+| `extra_teams` | Additional teams merged with auto-generated ones |
 | `users` | Test user accounts with team membership |
 | `glossaries` | Glossary definitions with owner/reviewer teams, terms, domain |
 | `test_matrix` | Test scenarios: user x resource x expected operations |
@@ -197,7 +238,7 @@ The JSON config drives both setup and testing:
 ```json
 {
   "name": "Steward creates/edits in own domain",
-  "user": "maxime@keytrade-test.local",
+  "user": "steward@example.local",
   "resource_type": "glossary",
   "resource": "MarketingGlossary",
   "expect": {
@@ -209,12 +250,12 @@ The JSON config drives both setup and testing:
 }
 ```
 
-The test harness treats `deny` and `notAllow` as equivalent.
+The test harness treats `deny` and `notAllow` as equivalent (both mean "blocked").
 
 ## Creating Your Own Scenario
 
 1. Copy `config/keytrade-glossary.json` to a new file
-2. Edit domains, policies, roles, teams, users, glossaries
+2. Edit domains, policies, roles, teams/auto_teams, users, glossaries
 3. Define `test_matrix` with expected outcomes
 4. Run:
    ```bash
@@ -226,16 +267,16 @@ The test harness treats `deny` and `notAllow` as equivalent.
 
 Each run produces a JSON report in `reports/` with timestamp, pass/fail counts, pass rate, and per-assertion detail (test name, user, resource, operation, expected vs actual, policy & rule).
 
-## KeyTrade Glossary Governance Scenario
+## Example Scenario
 
-The included `keytrade-glossary.json` tests a 3-policy model:
+The included `keytrade-glossary.json` demonstrates a glossary governance pattern with three roles:
 
-**Policies:** DataConsumerViewAllPolicy (view for everyone), DomainOnlyGovernancePolicy (deny writes outside domain), DataOwnerGlossaryDenyPolicy (deny glossary edits for Owners).
+- **DataSteward** — creates and edits glossary terms within their domain
+- **DataOwner** — views and reviews terms but cannot edit glossaries directly
+- **DataConsumer** — view-only access to all data assets
 
-**Roles:** DataSteward (create/edit terms), DataOwner (view + approve only), DataConsumer (view-only).
-
-**Coverage:** 8 scenarios, 31 assertions — steward CRUD, owner blocked, consumer view-only, cross-domain isolation.
+Coverage includes same-domain CRUD, cross-domain isolation, and default policy lockdown verification.
 
 ## Claude Skill
 
-The `skill/` directory contains a Claude skill for interactive RBAC testing from Claude Code or Cowork sessions. See `skill/SKILL.md`.
+The `skill/` directory contains a Claude skill for interactive RBAC testing from Claude Code or Cowork sessions. It includes lessons learned, debugging workflows, and common gotchas from testing across OMD versions. See `skill/SKILL.md`.

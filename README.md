@@ -45,19 +45,19 @@ docker compose -f docker-compose-postgres.yml up -d
 # Wait ~60 seconds for all services to initialise
 
 # 4. Provision RBAC (locks down defaults, creates domains, policies, roles, teams, users, glossaries)
-uv run omd-setup --config config/keytrade-glossary.json
+uv run omd-setup --config config/example-glossary-governance.json
 
 # 5. Run the permission test matrix
-uv run omd-test --config config/keytrade-glossary.json
+uv run omd-test --config config/example-glossary-governance.json
 
 # 6. (Optional) Verbose mode — shows which policy/rule produced each result
-uv run omd-test --config config/keytrade-glossary.json --verbose
+uv run omd-test --config config/example-glossary-governance.json --verbose
 ```
 
 Shell wrapper scripts are also provided for convenience:
 ```bash
-./scripts/setup.sh --config config/keytrade-glossary.json
-./scripts/test-permissions.sh --config config/keytrade-glossary.json
+./scripts/setup.sh --config config/example-glossary-governance.json
+./scripts/test-permissions.sh --config config/example-glossary-governance.json
 ./scripts/check.sh --server http://localhost:8585/api/v1
 ```
 
@@ -72,8 +72,8 @@ export OMD_BASE_URL=https://your-org.getcollate.io/api/v1
 export OMD_AUTH_TYPE=token
 export OMD_API_TOKEN=your-jwt-token-here
 
-uv run omd-setup --config config/keytrade-glossary.json
-uv run omd-test --config config/keytrade-glossary.json
+uv run omd-setup --config config/example-glossary-governance.json
+uv run omd-test --config config/example-glossary-governance.json
 ```
 
 ## Cross-Platform Support
@@ -93,7 +93,7 @@ omd-rbac-testing/
 │   ├── test_runner.py          # Permission matrix tester (omd-test CLI)
 │   └── preflight.py            # Environment checker (omd-check CLI)
 ├── config/
-│   └── keytrade-glossary.json  # Example scenario config
+│   └── example-glossary-governance.json  # Example scenario config
 ├── scripts/                    # Optional shell wrappers
 │   ├── get-compose.sh          # Downloads official OMD docker-compose
 │   ├── setup.sh
@@ -254,7 +254,7 @@ The test harness treats `deny` and `notAllow` as equivalent (both mean "blocked"
 
 ## Creating Your Own Scenario
 
-1. Copy `config/keytrade-glossary.json` to a new file
+1. Copy `config/example-glossary-governance.json` to a new file
 2. Edit domains, policies, roles, teams/auto_teams, users, glossaries
 3. Define `test_matrix` with expected outcomes
 4. Run:
@@ -269,7 +269,7 @@ Each run produces a JSON report in `reports/` with timestamp, pass/fail counts, 
 
 ## Example Scenario
 
-The included `keytrade-glossary.json` demonstrates a glossary governance pattern with three roles:
+The included `config/example-glossary-governance.json` demonstrates a glossary governance pattern with three roles:
 
 - **DataSteward** — creates and edits glossary terms within their domain
 - **DataOwner** — views and reviews terms but cannot edit glossaries directly

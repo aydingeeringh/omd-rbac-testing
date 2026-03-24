@@ -1,5 +1,5 @@
 {
-  "description": "KeyTrade glossary governance RBAC scenario",
+  "description": "Example glossary governance RBAC scenario — Steward/Owner/Consumer roles with domain isolation",
   "omd_version": "1.12.3",
   "server": {
     "base_url": "http://localhost:8585/api/v1",
@@ -143,9 +143,9 @@
     }
   ],
   "users": [
-    { "name": "maxime", "displayName": "Maxime Deleuze", "email": "maxime@keytrade-test.local", "password": "Test@12345", "team": "MarketingDataStewards" },
-    { "name": "owner",  "displayName": "Data Owner Test User", "email": "owner@keytrade-test.local",  "password": "Test@12345", "team": "MarketingDataOwners" },
-    { "name": "consumer", "displayName": "Consumer Test User", "email": "consumer@keytrade-test.local", "password": "Test@12345", "team": "DataConsumers" }
+    { "name": "steward", "displayName": "Data Steward Test User", "email": "steward@example-test.local", "password": "Test@12345", "team": "MarketingDataStewards" },
+    { "name": "owner",  "displayName": "Data Owner Test User", "email": "owner@example-test.local",  "password": "Test@12345", "team": "MarketingDataOwners" },
+    { "name": "consumer", "displayName": "Consumer Test User", "email": "consumer@example-test.local", "password": "Test@12345", "team": "DataConsumers" }
   ],
   "glossaries": [
     {
@@ -174,56 +174,56 @@
   "test_matrix": [
     {
       "name": "Steward creates/edits in own domain",
-      "user": "maxime@keytrade-test.local",
+      "user": "steward@example-test.local",
       "resource_type": "glossary",
       "resource": "MarketingGlossary",
       "expect": { "Create": "allow", "EditAll": "allow", "ViewAll": "allow", "Delete": "allow" }
     },
     {
       "name": "Steward edits glossary term in own domain",
-      "user": "maxime@keytrade-test.local",
+      "user": "steward@example-test.local",
       "resource_type": "glossaryTerm",
       "resource": "MarketingGlossary.CampaignROI",
       "expect": { "Create": "allow", "EditAll": "allow", "EditDescription": "allow", "ViewAll": "allow" }
     },
     {
       "name": "Owner blocked from glossary edits in own domain",
-      "user": "owner@keytrade-test.local",
+      "user": "owner@example-test.local",
       "resource_type": "glossary",
       "resource": "MarketingGlossary",
       "expect": { "Create": "deny", "EditAll": "deny", "Delete": "deny", "ViewAll": "allow" }
     },
     {
       "name": "Owner blocked from term edits in own domain",
-      "user": "owner@keytrade-test.local",
+      "user": "owner@example-test.local",
       "resource_type": "glossaryTerm",
       "resource": "MarketingGlossary.CampaignROI",
       "expect": { "Create": "deny", "EditAll": "deny", "EditDescription": "deny", "ViewAll": "allow" }
     },
     {
       "name": "Consumer has view-only on glossary",
-      "user": "consumer@keytrade-test.local",
+      "user": "consumer@example-test.local",
       "resource_type": "glossary",
       "resource": "MarketingGlossary",
       "expect": { "Create": "notAllow", "EditAll": "notAllow", "Delete": "notAllow", "ViewAll": "allow" }
     },
     {
       "name": "Consumer has view-only on term",
-      "user": "consumer@keytrade-test.local",
+      "user": "consumer@example-test.local",
       "resource_type": "glossaryTerm",
       "resource": "MarketingGlossary.CampaignROI",
       "expect": { "Create": "notAllow", "EditAll": "notAllow", "ViewAll": "allow" }
     },
     {
       "name": "Steward blocked from Sales glossary (cross-domain)",
-      "user": "maxime@keytrade-test.local",
+      "user": "steward@example-test.local",
       "resource_type": "glossary",
       "resource": "SalesGlossary",
       "expect": { "Create": "deny", "EditAll": "deny", "Delete": "deny", "ViewAll": "allow" }
     },
     {
       "name": "Owner blocked from Sales glossary (cross-domain)",
-      "user": "owner@keytrade-test.local",
+      "user": "owner@example-test.local",
       "resource_type": "glossary",
       "resource": "SalesGlossary",
       "expect": { "Create": "deny", "EditAll": "deny", "Delete": "deny", "ViewAll": "allow" }

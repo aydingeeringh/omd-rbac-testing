@@ -5,8 +5,8 @@ queries the OMD permissions API, and compares actual vs expected access.
 Produces a pass/fail report for every role x resource x operation combo.
 
 Usage (via uv):
-    uv run omd-test --config config/keytrade-glossary.json
-    uv run omd-test --config config/keytrade-glossary.json --verbose
+    uv run omd-test --config config/example-glossary-governance.json
+    uv run omd-test --config config/example-glossary-governance.json --verbose
 """
 
 from __future__ import annotations

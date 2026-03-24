@@ -4,7 +4,7 @@ Reads a JSON config and provisions domains, policies, roles, teams,
 users, glossaries, and glossary terms via the OMD REST API.
 
 Usage (via uv):
-    uv run omd-setup --config config/keytrade-glossary.json
+    uv run omd-setup --config config/example-glossary-governance.json
 """
 
 from __future__ import annotations
@@ -470,8 +470,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--config", "-c",
-        default="config/keytrade-glossary.json",
-        help="Path to JSON config file (default: config/keytrade-glossary.json)",
+        default="config/example-glossary-governance.json",
+        help="Path to JSON config file (default: config/example-glossary-governance.json)",
     )
     args = parser.parse_args()
 

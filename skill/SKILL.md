@@ -129,7 +129,7 @@ The repo lives in the user's workspace. Look for `omd-rbac-testing/`:
 - `src/omd_rbac/setup.py` — RBAC provisioner (`uv run omd-setup`) with auto_teams + default policy lockdown
 - `src/omd_rbac/test_runner.py` — Permission matrix tester (`uv run omd-test`)
 - `src/omd_rbac/preflight.py` — Environment checker (`uv run omd-check`)
-- `config/keytrade-glossary.json` — KeyTrade RBAC scenario (3 roles: Steward/Owner/Consumer)
+- `config/example-glossary-governance.json` — Example glossary governance scenario (3 roles: Steward/Owner/Consumer)
 - `config/spglobal-domains.json` — S&P Global scenario (3-tier: Reader/Writer/Admin per domain, auto_teams)
 - `scripts/get-compose.sh` — Downloads official OMD docker-compose (defaults to postgres full-stack)
 - `reports/` — Auto-generated JSON test reports

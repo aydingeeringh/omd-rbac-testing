@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Convenience wrapper — delegates to the Python module via uv.
-# Usage: ./scripts/setup.sh [--config config/keytrade-glossary.json]
+# Usage: ./scripts/setup.sh [--config config/example-glossary-governance.json]
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
